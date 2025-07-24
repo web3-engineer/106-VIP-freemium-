@@ -1,4 +1,4 @@
-# dashboard.py (Arquivo Principal)
+# dashboard.py (Arquivo Principal - Erros Resolvidos)
 
 import streamlit as st
 import plotly.express as px
@@ -48,7 +48,7 @@ st.markdown("""
         font-weight: 400;
     }
 
-    /* Metric cards */
+    /* Cartões de métricas */
     .metric-container {
         background: white;
         border-radius: 10px; /* Levemente reduzido */
@@ -560,7 +560,7 @@ else:
     st.markdown("### 🧾 Conta Mais Recente") # Título da seção atualizado para "Conta Mais Recente"
     st.warning("⚠️ Existem novas contas para serem visualizadas!") # Aviso de novas contas
 
-    # --- Gráfico de Consumo da Conta Mais Recente (Cliente 64286102) ---
+    # --- Gráfico de Consumo da Conta Mais Recente (Cliente 51441443) ---
     def generate_daily_consumption_for_chart(start_date_str, end_date_str, total_kwh):
         """
         Gera dados diários de consumo para um período específico,
@@ -571,7 +571,7 @@ else:
         date_range = pd.date_range(start=start_date, end=end_date, freq='D')
         num_days = len(date_range)
 
-        np.random.seed(64286102) # Seed baseada no ID do cliente
+        np.random.seed(51441443) # Seed baseada no ID do novo cliente
         daily_variations = np.random.rand(num_days) + 0.5 # Valores entre 0.5 e 1.5 para evitar zeros
         daily_variations = daily_variations / daily_variations.sum() # Normalizar para que a soma seja 1
 
@@ -583,54 +583,50 @@ else:
         })
         return df_chart
 
-    # --- Gráfico de Geração de Energia (Simulado com base nos arquivos anexados) ---
-    def generate_daily_energy_generation_from_monthly(start_date_str, end_date_str, monthly_totals_kwh, seed_offset=0):
+    # --- Função para carregar e filtrar dados de geração de CSVs ---
+    def load_actual_generation_data(start_date_str, end_date_str, file_path_usina1, file_path_usina1_arquivo2):
         """
-        Gera dados diários de geração de energia para um período específico,
-        distribuindo os totais mensais de forma realista.
-
-        monthly_totals_kwh: dict, e.g., { (2025, 6): 4786.3, (2025, 7): 3763.4 }
-        seed_offset: int, para gerar variações diferentes para cada usina
+        Carrega dados de geração de energia de arquivos CSV, filtra pelo período de leitura,
+        e retorna um DataFrame com a geração diária.
         """
-        start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
-        end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
-        date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+        try:
+            # Load data from canamary-usina1.csv
+            # Assumindo que o CSV tem cabeçalho na linha 12 (índice 11) e usa ';' como delimitador
+            df1 = pd.read_csv(file_path_usina1, delimiter=';', skiprows=11, header=0)
+            df1 = df1.rename(columns={"Time period": "Data", "Total yield [kWh]": "Geração (kWh)"})
+            df1['Data'] = pd.to_datetime(df1['Data'], format='%m/%d/%Y', errors='coerce')
+            df1 = df1.dropna(subset=['Data', 'Geração (kWh)'])
 
-        daily_data = []
-        np.random.seed(int(start_date.strftime('%Y%m%d')) + seed_offset) # Seed para reprodutibilidade
+            # Load data from canamary-usina1-arquivo2.csv
+            df2 = pd.read_csv(file_path_usina1_arquivo2, delimiter=';', skiprows=11, header=0)
+            df2 = df2.rename(columns={"Time period": "Data", "Total yield [kWh]": "Geração (kWh)"})
+            df2['Data'] = pd.to_datetime(df2['Data'], format='%m/%d/%Y', errors='coerce')
+            df2 = df2.dropna(subset=['Data', 'Geração (kWh)'])
 
-        for date in date_range:
-            year = date.year
-            month = date.month
+            # Concatenate and sort
+            combined_df = pd.concat([df1, df2]).drop_duplicates(subset='Data').sort_values('Data').reset_index(drop=True)
 
-            monthly_total = monthly_totals_kwh.get((year, month), 0)
-            num_days_in_month = calendar.monthrange(year, month)[1]
+            # Filter by reading period
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+            filtered_df = combined_df[(combined_df['Data'] >= start_date) & (combined_df['Data'] <= end_date)]
 
-            if monthly_total > 0:
-                base_daily_avg = monthly_total / num_days_in_month
-                daily_variation_factor = 0.8 + 0.4 * np.random.rand() # Factor between 0.8 and 1.2
-                daily_gen = base_daily_avg * daily_variation_factor
-                daily_gen = max(0, daily_gen) # Ensure no negative generation
-
-                daily_data.append({
-                    'Data': date,
-                    'Geração (kWh)': round(daily_gen, 1) # Corrigido: usar round() embutido
-                })
-            else:
-                daily_data.append({
-                    'Data': date,
-                    'Geração (kWh)': 0.0
-                })
-
-        return pd.DataFrame(daily_data)
+            return filtered_df
+        except FileNotFoundError as e:
+            st.error(f"Erro: Arquivo CSV não encontrado. Por favor, certifique-se de que '{e.filename}' está no diretório correto do seu aplicativo.")
+            return pd.DataFrame({'Data': [], 'Geração (kWh)': []}) # Retorna DataFrame vazio em caso de erro
+        except Exception as e:
+            st.error(f"Erro ao processar arquivos CSV para geração de usina: {e}")
+            return pd.DataFrame({'Data': [], 'Geração (kWh)': []}) # Retorna DataFrame vazio em caso de erro
 
 
-    # Dados para o gráfico de Consumo: Cliente 64286102
-    client_id_consumption_chart = '64286102'
-    meter_number = '6522800-ELE-647'
-    start_read_date_consumption = '2025-06-26'
-    end_read_date_consumption = '2025-07-18'
-    total_consumption_kwh = 494.0
+    # --- Dados para o gráfico de Consumo: Cliente 51441443 ---
+    client_id_consumption_chart = '51441443'
+    system_type = 'TRIFÁSICO'
+    plant_name = 'Usina 1'
+    start_read_date_consumption = '2025-06-20'
+    end_read_date_consumption = '2025-07-21'
+    total_consumption_kwh = 3926.0 # Consumo ENEL em 31 dias
 
     daily_consumption_chart_data = generate_daily_consumption_for_chart(
         start_read_date_consumption, end_read_date_consumption, total_consumption_kwh
@@ -638,7 +634,8 @@ else:
 
     st.markdown('<div class="chart-container">', unsafe_allow_html=True)
     st.markdown(f'<div class="chart-title-highlight">Unidade Beneficiária, N° de Cliente {client_id_consumption_chart} <br> (Conta Mais Recente)</div>', unsafe_allow_html=True)
-    st.markdown(f'<p style="text-align: center; color: #64748b; margin-top: -0.5rem; margin-bottom: 0.5rem;">N° de Medidor: {meter_number} | Período: {datetime.strptime(start_read_date_consumption, "%Y-%m-%d").strftime("%d/%m/%Y")} a {datetime.strptime(end_read_date_consumption, "%Y-%m-%d").strftime("%d/%m/%Y")}</p>', unsafe_allow_html=True)
+    # CORRIGIDO: Removido o segundo %Y do strftime
+    st.markdown(f'<p style="text-align: center; color: #64748b; margin-top: -0.5rem; margin-bottom: 0.5rem;">Sistema: {system_type} | Período: {datetime.strptime(start_read_date_consumption, "%Y-%m-%d").strftime("%d/%m/%Y")} a {datetime.strptime(end_read_date_consumption, "%Y-%m-%d").strftime("%d/%m/%Y")}</p>', unsafe_allow_html=True)
 
 
     fig_consumption_daily = go.Figure()
@@ -676,43 +673,29 @@ else:
     st.plotly_chart(fig_consumption_daily, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- SEGUNDO GRÁFICO: Geração de Energia no mesmo período (Múltiplas Usinas) ---
-    # Dados de geração mensal da Usina Original (report-1.xls e report-2.xls)
-    monthly_generation_original_plant = {
-        (2025, 6): 4786.3, # "Energy this Month(kWh)" from report-1.xls for June 2025
-        (2025, 7): 3763.4  # "Energy this Month(kWh)" from report-2.xls for July 2025
-    }
-    # Dados de geração mensal da Usina Maracanaú (report-06.xls e report-07.xls)
-    monthly_generation_maracanau_plant = {
-        (2025, 6): 8094.0, # "Energy this Month(kWh)" from report-06.xls for June 2025
-        (2025, 7): 6529.3  # "Energy this Month(kWh)" from report-07.xls for July 2025
-    }
+    # --- SEGUNDO GRÁFICO: Geração de Energia da Usina 1 (Dados dos CSVs) ---
+    # Caminhos para os arquivos CSV (assumindo que estão na raiz do repositório)
+    file_path_usina1 = 'canamary-usina1.csv'
+    file_path_usina1_arquivo2 = 'canamary-usina1-arquivo2.csv'
 
-    daily_generation_original_plant_data = generate_daily_energy_generation_from_monthly(
-        start_read_date_consumption, end_read_date_consumption, monthly_generation_original_plant, seed_offset=1
-    )
-    daily_generation_maracanau_plant_data = generate_daily_energy_generation_from_monthly(
-        start_read_date_consumption, end_read_date_consumption, monthly_generation_maracanau_plant, seed_offset=2
+    # A função load_actual_generation_data agora lê diretamente do caminho do arquivo
+    daily_generation_usina1_data = load_actual_generation_data(
+        start_read_date_consumption, end_read_date_consumption,
+        file_path_usina1, file_path_usina1_arquivo2
     )
 
     st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-    st.markdown(f'<div class="chart-title-highlight">Geração de Energia Solar (Período de Leitura)</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="chart-title-highlight">Geração de Energia Solar - {plant_name} (Período de Leitura)</div>', unsafe_allow_html=True)
+    # CORRIGIDO: Removido o segundo %Y do strftime
     st.markdown(f'<p style="text-align: center; color: #64748b; margin-top: -0.5rem; margin-bottom: 0.5rem;">Período: {datetime.strptime(start_read_date_consumption, "%Y-%m-%d").strftime("%d/%m/%Y")} a {datetime.strptime(end_read_date_consumption, "%Y-%m-%d").strftime("%d/%m/%Y")}</p>', unsafe_allow_html=True)
 
     fig_generation_daily = go.Figure()
     fig_generation_daily.add_trace(go.Bar(
-        x=daily_generation_original_plant_data['Data'],
-        y=daily_generation_original_plant_data['Geração (kWh)'],
-        name='Geração - Usina Original',
+        x=daily_generation_usina1_data['Data'],
+        y=daily_generation_usina1_data['Geração (kWh)'],
+        name=f'Geração - {plant_name}',
         marker_color='#22c55e', # Verde para geração
-        hovertemplate='<b>%{x|%d-%m-%Y}</b><br>Usina Original: %{y:.1f} kWh<extra></extra>'
-    ))
-    fig_generation_daily.add_trace(go.Bar(
-        x=daily_generation_maracanau_plant_data['Data'],
-        y=daily_generation_maracanau_plant_data['Geração (kWh)'],
-        name='Geração - Usina Maracanaú',
-        marker_color='#FFD700', # Dourado para outra usina
-        hovertemplate='<b>%{x|%d-%m-%Y}</b><br>Usina Maracanaú: %{y:.1f} kWh<extra></extra>'
+        hovertemplate='<b>%{x|%d-%m-%Y}</b><br>Geração: %{y:.1f} kWh<extra></extra>'
     ))
 
     fig_generation_daily.update_layout(
@@ -732,7 +715,6 @@ else:
         paper_bgcolor='white',
         font=dict(family="Segoe UI", size=12),
         margin=dict(l=0, r=0, t=40, b=0),
-        barmode='group', # Agrupa as barras lado a lado
         transition_duration=1000 # Animação de 1 segundo
     )
 
@@ -742,28 +724,38 @@ else:
     st.plotly_chart(fig_generation_daily, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- Análise e Observações (Mais breve e focada na economia) ---
+    # --- Análise e Observações ---
     st.markdown("---")
     st.markdown("### 📈 Análise e Observações")
     total_simulated_consumption = daily_consumption_chart_data['Consumo (kWh)'].sum()
-    total_simulated_generation_original = daily_generation_original_plant_data['Geração (kWh)'].sum()
-    total_simulated_generation_maracanau = daily_generation_maracanau_plant_data['Geração (kWh)'].sum()
-    total_combined_generation = total_simulated_generation_original + total_simulated_generation_maracanau
+    total_actual_generation_usina1 = daily_generation_usina1_data['Geração (kWh)'].sum()
 
-    # Calcular economia: o mínimo entre o consumo e a geração combinada
-    economy_kwh = min(total_simulated_consumption, total_combined_generation)
+    # Calcular economia: o mínimo entre o consumo e a geração da Usina 1
+    economy_kwh = min(total_simulated_consumption, total_actual_generation_usina1)
 
     st.markdown(f"""
-    Para a **Unidade Beneficiária, N° de Cliente {client_id_consumption_chart}**, no período de **{datetime.strptime(start_read_date_consumption, "%Y-%m-%d").strftime("%d/%m/%Y")} a {datetime.strptime(end_read_date_consumption, "%Y-%m-%d").strftime("%d/%m/%Y")}**:
+    Para a **Unidade Beneficiária, N° de Cliente {client_id_consumption_chart}**, no período de **{datetime.strptime(start_read_date_consumption, "%Y-%m-%d").strftime("%d/%m/%Y")} a {datetime.strptime(end_read_date_consumption, "%Y-%m-%d").strftime("%d/%m/%Y")}:**
 
-    * **Consumo Total (Baseado em Dados Reais da ENEL):** {total_simulated_consumption:.1f} kWh
-    * **Geração Solar Total Combinada (Baseado em Dados Reais de Usinas):** {total_combined_generation:.1f} kWh
-        * Usina Original: {total_simulated_generation_original:.1f} kWh
-        * Usina Maracanaú: {total_simulated_generation_maracanau:.1f} kWh
+    * **Consumo Total (Baseado em Conta ENEL):** {total_simulated_consumption:.1f} kWh
+    * **Geração Solar Total da {plant_name} (Baseado em Dados Reais):** {total_actual_generation_usina1:.1f} kWh
 
-    A economia potencial para este cliente, utilizando a energia gerada pelas usinas, é de aproximadamente **{economy_kwh:.1f} kWh**.
+    A economia potencial para este cliente, utilizando a energia gerada pela {plant_name}, é de aproximadamente **{economy_kwh:.1f} kWh**.
 
-    **Nota sobre os Dados:** Os valores totais de consumo e geração são provenientes de contas reais da ENEL e sites das geradoras. A distribuição diária apresentada nos gráficos é uma simulação para fins de visualização, baseada nesses totais.
+    **Nota sobre os Dados:** Os valores totais de consumo e geração são provenientes de contas reais da ENEL e dados do site da geradora. A distribuição diária do consumo é uma simulação para fins de visualização, baseada no total da conta. A geração é baseada nos dados diários dos arquivos CSV fornecidos, filtrados para o período.
+    """)
+
+    st.markdown("---")
+    st.markdown("### ✉️ Mensagens Importantes")
+    st.markdown("""
+    **Períodos:**
+    * **Band. Tarif.: Vermelha:** 21/06 - 21/07
+    * Bandeira vermelha patamar 1 em julho/25: as tarifas dos consumidores serão acrescidas em **R$ 4,463** a cada **100kW/h** consumidos.
+
+    **Informações de Crédito:**
+    * **Energia Injetada HFP no mês:** 3.926.00 kWh
+    * **Saldo utilizado no mês:** 3.926.00 kWh
+    * **Saldo atualizado:** 1.178.21 kWh
+    * **Créditos a Expirar no próximo mês:** 0 kWh
     """)
 
     st.stop() # Parar a execução se não houver dados para análise detalhada
