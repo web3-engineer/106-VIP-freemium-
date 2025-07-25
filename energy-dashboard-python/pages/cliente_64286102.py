@@ -1,4 +1,4 @@
-# pages/1_Cliente_56340547.py
+# pages/6_Cliente_64286102.py
 
 import streamlit as st
 import plotly.graph_objects as go
@@ -7,6 +7,11 @@ import numpy as np
 from datetime import datetime, timedelta
 import calendar
 import io # Para lidar com a leitura de arquivos em memória
+
+# --- Inicialização Robusta do Session State ---
+# Garante que 'all_clients_data' exista, mesmo se a página for acessada diretamente.
+if 'all_clients_data' not in st.session_state:
+    st.session_state.all_clients_data = pd.DataFrame()
 
 # --- CSS (Copiado do dashboard.py para consistência de estilo) ---
 st.markdown("""
@@ -351,7 +356,7 @@ def display_summary_table(df_filtered):
 
 
 # --- Lógica da Página do Cliente ---
-CLIENT_ID = '56340547' # Define o ID do cliente para esta página
+CLIENT_ID = '64286102' # Define o ID do cliente para esta página
 CLIENT_NAME = 'Unidade Beneficiária' # Nome da unidade
 
 st.markdown(f'<h1 class="main-header">Análise de Energia para a {CLIENT_NAME}, N° de Cliente {CLIENT_ID}</h1>', unsafe_allow_html=True)
@@ -381,203 +386,206 @@ def generate_daily_consumption_for_chart_client(start_date_str, end_date_str, to
     })
     return df_chart
 
-def load_client_generation_data(file_path_client_gen1, file_path_client_gen2, start_date_str, end_date_str):
+def load_usina_4_data(file_path_usina4, start_date_str, end_date_str):
     """
-    Carrega dados de geração de energia de arquivos CSV específicos do cliente,
-    filtra pelo período de leitura e retorna um DataFrame com a geração diária.
+    Carrega dados de geração de energia do arquivo canamary-usina-4.xlsx - Sheet1.csv,
+    converte de Watts para kWh e filtra pelo período de leitura.
     """
     try:
-        # Load data from cliente_56340547.csv
-        # Assumindo que o CSV tem cabeçalho na linha 15 (índice 14) e usa ';' como delimitador
-        df1 = pd.read_csv(file_path_client_gen1, delimiter=';', skiprows=14, header=0)
-        df1 = df1.rename(columns={"Time period": "Data", "Total yield [kWh]": "Geração (kWh)"})
-        df1['Data'] = pd.to_datetime(df1['Data'], format='%m/%d/%Y', errors='coerce')
-        df1 = df1.dropna(subset=['Data', 'Geração (kWh)'])
+        df = pd.read_csv(file_path_usina4, delimiter=',') # Assumindo que este CSV usa ',' como delimitador
+        df = df.rename(columns={"Updated Time": "Data", "Production Power(W)": "Producao_W"})
 
-        # Load data from cliente_56340547_2.csv
-        df2 = pd.read_csv(file_path_client_gen2, delimiter=';', skiprows=14, header=0)
-        df2 = df2.rename(columns={"Time period": "Data", "Total yield [kWh]": "Geração (kWh)"})
-        df2['Data'] = pd.to_datetime(df2['Data'], format='%m/%d/%Y', errors='coerce')
-        df2 = df2.dropna(subset=['Data', 'Geração (kWh)'])
+        # Converter 'Data' para datetime, tratando possíveis erros
+        df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
+        df = df.dropna(subset=['Data'])
 
-        # Concatenate and sort
-        combined_df = pd.concat([df1, df2]).drop_duplicates(subset='Data').sort_values('Data').reset_index(drop=True)
+        # Converter 'Producao_W' para numérico, tratando 'nan' ou strings vazias
+        df['Producao_W'] = pd.to_numeric(df['Producao_W'], errors='coerce').fillna(0)
 
-        # Filter by reading period
+        # Converter Watts para kWh (W * 5min / 60min/h / 1000W/kW)
+        # Cada linha é um intervalo de 5 minutos, então (W * 5/60) / 1000 = kWh
+        df['Geração (kWh)'] = (df['Producao_W'] * 5 / 60) / 1000
+
+        # Agrupar por dia para obter a geração diária total
+        daily_df = df.groupby(df['Data'].dt.date)['Geração (kWh)'].sum().reset_index()
+        daily_df['Data'] = pd.to_datetime(daily_df['Data']) # Converter de volta para datetime para filtragem
+
+        # Filtrar pelo período de leitura
         start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
         end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
-        filtered_df = combined_df[(combined_df['Data'] >= start_date) & (combined_df['Data'] <= end_date)]
+        filtered_df = daily_df[(daily_df['Data'] >= start_date) & (daily_df['Data'] <= end_date)]
 
         return filtered_df
     except FileNotFoundError as e:
         st.error(f"Erro: Arquivo CSV não encontrado. Por favor, certifique-se de que '{e.filename}' está no diretório correto do seu aplicativo.")
         return pd.DataFrame({'Data': [], 'Geração (kWh)': []}) # Retorna DataFrame vazio em caso de erro
     except Exception as e:
-        st.error(f"Erro ao processar arquivos CSV de geração do cliente: {e}")
+        st.error(f"Erro ao processar arquivos CSV de geração da usina: {e}")
         return pd.DataFrame({'Data': [], 'Geração (kWh)': []}) # Retorna DataFrame vazio em caso de erro
 
 
-if not st.session_state.all_clients_data.empty:
-    df_client_all_data = st.session_state.all_clients_data[st.session_state.all_clients_data['client_id'] == CLIENT_ID]
+# Verifica se os dados globais foram carregados pelo dashboard.py
+if st.session_state.all_clients_data.empty:
+    st.info("Por favor, carregue ou gere os dados de energia na página principal para ver a análise do cliente. Navegue de volta para 'MMC Soluções'.")
+    st.stop() # Para a execução desta página se os dados não estiverem disponíveis
 
-    # --- Dados específicos para o cliente 56340547 ---
-    start_read_date = '2025-06-06'
-    end_read_date = '2025-07-07'
-    system_type = 'TRIFÁSICO'
-    total_consumption_kwh = 2245.0
-    plant_name = 'Usina 1' # Supondo que esta unidade é atendida pela Usina 1
+# Se os dados estiverem disponíveis, continue com a lógica da página
+df_client_all_data = st.session_state.all_clients_data[st.session_state.all_clients_data['client_id'] == CLIENT_ID]
 
-    # --- Primeiro Gráfico: Consumo ENEL Mensal (Simulado diariamente para o período) ---
-    daily_consumption_data = generate_daily_consumption_for_chart_client(
-        start_read_date, end_read_date, total_consumption_kwh, seed=int(CLIENT_ID)
-    )
+# --- Dados específicos para o cliente 64286102 ---
+start_read_date = '2025-06-25' # Data de início da leitura
+end_read_date = '2025-07-18'  # Data de fim da leitura
+system_type = 'TRIFÁSICO'
+total_consumption_kwh = 494.0
+plant_name = 'Usina 1' # De acordo com o prompt, esta unidade é atendida pela Usina 1
 
-    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-    st.markdown(f'<div class="chart-title-highlight">Consumo ENEL Mensal <br> N° de Cliente {CLIENT_ID}</div>', unsafe_allow_html=True)
-    st.markdown(f'<p style="text-align: center; color: #64748b; margin-top: -0.5rem; margin-bottom: 0.5rem;">Sistema: {system_type} | Período: {datetime.strptime(start_read_date, "%Y-%m-%d").strftime("%d/%m/%Y")} a {datetime.strptime(end_read_date, "%Y-%m-%d").strftime("%d/%m/%Y")}</p>', unsafe_allow_html=True)
+# --- Primeiro Gráfico: Consumo ENEL Mensal (Simulado diariamente para o período) ---
+daily_consumption_data = generate_daily_consumption_for_chart_client(
+    start_read_date, end_read_date, total_consumption_kwh, seed=int(CLIENT_ID)
+)
 
-    fig_enel_consumption = go.Figure()
-    fig_enel_consumption.add_trace(go.Bar(
-        x=daily_consumption_data['Data'],
-        y=daily_consumption_data['Consumo (kWh)'],
-        name='Consumo Diário ENEL',
-        marker_color='#ef4444', # Vermelho para consumo ENEL
-        hovertemplate='<b>%{x|%d-%m-%Y}</b><br>Consumo: %{y:.1f} kWh<extra></extra>'
-    ))
-    fig_enel_consumption.update_layout(
-        height=350, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        xaxis_title="Dia do Mês", yaxis_title="Consumo (kWh)", hovermode='x unified', plot_bgcolor='white',
-        paper_bgcolor='white', font=dict(family="Segoe UI", size=12), margin=dict(l=0, r=0, t=40, b=0),
-        transition_duration=1000
-    )
-    fig_enel_consumption.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#f1f5f9', tickformat="%d/%m")
-    fig_enel_consumption.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#f1f5f9')
-    st.plotly_chart(fig_enel_consumption, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+st.markdown(f'<div class="chart-title-highlight">Consumo ENEL Mensal <br> N° de Cliente {CLIENT_ID}</div>', unsafe_allow_html=True)
+st.markdown(f'<p style="text-align: center; color: #64748b; margin-top: -0.5rem; margin-bottom: 0.5rem;">Sistema: {system_type} | Período: {datetime.strptime(start_read_date, "%Y-%m-%d").strftime("%d/%m/%Y")} a {datetime.strptime(end_read_date, "%Y-%m-%d").strftime("%d/%m/%Y")}</p>', unsafe_allow_html=True)
 
-    # --- Mensagens Importantes da Conta ---
-    st.markdown("---")
-    st.markdown("### ✉️ Mensagens Importantes da Conta")
-    st.markdown("""
-    **Períodos:**
-    * **Band. Tarif.: Vermelha:** 07/06 - 07/07
-    * Bandeira vermelha patamar 1 em julho/25: as tarifas dos consumidores serão acrescidas em **R$ 4,463** a cada **100kW/h** consumidos.
+fig_enel_consumption = go.Figure()
+fig_enel_consumption.add_trace(go.Bar(
+    x=daily_consumption_data['Data'],
+    y=daily_consumption_data['Consumo (kWh)'],
+    name='Consumo Diário ENEL',
+    marker_color='#ef4444', # Vermelho para consumo ENEL
+    hovertemplate='<b>%{x|%d-%m-%Y}</b><br>Consumo: %{y:.1f} kWh<extra></extra>'
+))
+fig_enel_consumption.update_layout(
+    height=350, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    xaxis_title="Dia do Mês", yaxis_title="Consumo (kWh)", hovermode='x unified', plot_bgcolor='white',
+    paper_bgcolor='white', font=dict(family="Segoe UI", size=12), margin=dict(l=0, r=0, t=40, b=0),
+    transition_duration=1000
+)
+fig_enel_consumption.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#f1f5f9', tickformat="%d/%m")
+fig_enel_consumption.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#f1f5f9')
+st.plotly_chart(fig_enel_consumption, use_container_width=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
-    **Informações de Crédito:**
-    * **Energia Injetada HFP no mês:** 0 kWh
-    * **Saldo utilizado no mês:** 1.989.50 kWh
-    * **Saldo atualizado:** 0 kWh
-    * **Créditos a Expirar no próximo mês:** 0 kWh
-    """)
+# --- Mensagens Importantes da Conta ---
+st.markdown("---")
+st.markdown("### ✉️ Mensagens Importantes da Conta")
+st.markdown("""
+**Períodos:**
+* **Band. Tarif.: Vermelha:** 26/06 - 18/07
+* Bandeira vermelha patamar 1 em julho/25: as tarifas dos consumidores serão acrescidas em **R$ 4,463** a cada **100kW/h** consumidos.
 
-    # --- Segundo Gráfico: Geração de Energia da Usina 1 (Dados dos CSVs) ---
-    # Caminhos para os arquivos CSV (assumindo que estão na raiz do repositório)
-    file_path_client_gen1 = 'cliente_56340547.csv'
-    file_path_client_gen2 = 'cliente_56340547_2.csv'
+**Informações de Crédito:**
+* **Ener. injetada HFP no mês:** 0 kWh
+* **Saldo utilizado no mês:** 309.06 kWh
+* **Saldo atualizado:** 0 kWh
+* **Créditos a Expirar no próximo mês:** 0 kWh
+""")
 
-    daily_generation_client_data = load_client_generation_data(
-        file_path_client_gen1, file_path_client_gen2, start_read_date, end_read_date
-    )
+# --- Segundo Gráfico: Geração de Energia da Usina 1 (Dados do canamary-usina-4.xlsx - Sheet1.csv) ---
+# Caminho para o arquivo CSV (assumindo que está na raiz do repositório)
+file_path_usina4_sheet1 = 'canamary-usina-4.xlsx - Sheet1.csv'
 
-    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-    st.markdown(f'<div class="chart-title-highlight">Geração de Energia Solar - {plant_name} (Período de Leitura)</div>', unsafe_allow_html=True)
-    st.markdown(f'<p style="text-align: center; color: #64748b; margin-top: -0.5rem; margin-bottom: 0.5rem;">Período: {datetime.strptime(start_read_date, "%Y-%m-%d").strftime("%d/%m/%Y")} a {datetime.strptime(end_read_date, "%Y-%m-%d").strftime("%d/%m/%Y")}</p>', unsafe_allow_html=True)
+daily_generation_usina1_data = load_usina_4_data(
+    file_path_usina4_sheet1, start_read_date, end_read_date
+)
 
-    fig_generation_client = go.Figure()
-    fig_generation_client.add_trace(go.Bar(
-        x=daily_generation_client_data['Data'],
-        y=daily_generation_client_data['Geração (kWh)'],
-        name=f'Geração - {plant_name}',
-        marker_color='#22c55e', # Verde para geração
-        hovertemplate='<b>%{x|%d-%m-%Y}</b><br>Geração: %{y:.1f} kWh<extra></extra>'
-    ))
-    fig_generation_client.update_layout(
-        height=350, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        xaxis_title="Dia do Mês", yaxis_title="Geração (kWh)", hovermode='x unified', plot_bgcolor='white',
-        paper_bgcolor='white', font=dict(family="Segoe UI", size=12), margin=dict(l=0, r=0, t=40, b=0),
-        transition_duration=1000
-    )
-    fig_generation_client.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#f1f5f9', tickformat="%d/%m")
-    fig_generation_client.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#f1f5f9')
-    st.plotly_chart(fig_generation_client, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+st.markdown(f'<div class="chart-title-highlight">Geração de Energia Solar - {plant_name} (Período de Leitura)</div>', unsafe_allow_html=True)
+st.markdown(f'<p style="text-align: center; color: #64748b; margin-top: -0.5rem; margin-bottom: 0.5rem;">Período: {datetime.strptime(start_read_date, "%Y-%m-%d").strftime("%d/%m/%Y")} a {datetime.strptime(end_read_date, "%Y-%m-%d").strftime("%d/%m/%Y")}</p>', unsafe_allow_html=True)
 
-    # --- Terceiro Gráfico: Comparação de Consumo vs. Geração ---
-    # Merge dos dados de consumo e geração para o gráfico de comparação
-    comparison_df = pd.merge(
-        daily_consumption_data.rename(columns={'Consumo (kWh)': 'Consumo ENEL'}),
-        daily_generation_client_data.rename(columns={'Geração (kWh)': 'Geração Usina'}),
-        on='Data',
-        how='outer'
-    ).fillna(0) # Preenche NaNs com 0 caso haja datas sem dados em um dos lados
+fig_generation_client = go.Figure()
+fig_generation_client.add_trace(go.Bar(
+    x=daily_generation_usina1_data['Data'],
+    y=daily_generation_usina1_data['Geração (kWh)'],
+    name=f'Geração - {plant_name}',
+    marker_color='#22c55e', # Verde para geração
+    hovertemplate='<b>%{x|%d-%m-%Y}</b><br>Geração: %{y:.1f} kWh<extra></extra>'
+))
+fig_generation_client.update_layout(
+    height=350, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    xaxis_title="Dia do Mês", yaxis_title="Geração (kWh)", hovermode='x unified', plot_bgcolor='white',
+    paper_bgcolor='white', font=dict(family="Segoe UI", size=12), margin=dict(l=0, r=0, t=40, b=0),
+    transition_duration=1000
+)
+fig_generation_client.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#f1f5f9', tickformat="%d/%m")
+fig_generation_client.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#f1f5f9')
+st.plotly_chart(fig_generation_client, use_container_width=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-    st.markdown(f'<div class="chart-title-highlight">Comparação: Consumo ENEL vs. Geração Solar ({plant_name})</div>', unsafe_allow_html=True)
-    st.markdown(f'<p style="text-align: center; color: #64748b; margin-top: -0.5rem; margin-bottom: 0.5rem;">Período: {datetime.strptime(start_read_date, "%Y-%m-%d").strftime("%d/%m/%Y")} a {datetime.strptime(end_read_date, "%Y-%m-%d").strftime("%d/%m/%Y")}</p>', unsafe_allow_html=True)
+# --- Terceiro Gráfico: Comparação de Consumo vs. Geração ---
+# Merge dos dados de consumo e geração para o gráfico de comparação
+comparison_df = pd.merge(
+    daily_consumption_data.rename(columns={'Consumo (kWh)': 'Consumo ENEL'}),
+    daily_generation_usina1_data.rename(columns={'Geração (kWh)': 'Geração Usina'}),
+    on='Data',
+    how='outer'
+).fillna(0) # Preenche NaNs com 0 caso haja datas sem dados em um dos lados
 
-    fig_comparison = go.Figure()
-    fig_comparison.add_trace(go.Bar(
-        x=comparison_df['Data'],
-        y=comparison_df['Consumo ENEL'],
-        name='Consumo ENEL',
-        marker_color='#ef4444', # Vermelho
-        hovertemplate='<b>%{x|%d-%m-%Y}</b><br>Consumo: %{y:.1f} kWh<extra></extra>'
-    ))
-    fig_comparison.add_trace(go.Bar(
-        x=comparison_df['Data'],
-        y=comparison_df['Geração Usina'],
-        name='Geração Usina',
-        marker_color='#22c55e', # Verde
-        hovertemplate='<b>%{x|%d-%m-%Y}</b><br>Geração: %{y:.1f} kWh<extra></extra>'
-    ))
-    fig_comparison.update_layout(
-        height=400, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        xaxis_title="Data", yaxis_title="Energia (kWh)", hovermode='x unified', plot_bgcolor='white',
-        paper_bgcolor='white', font=dict(family="Segoe UI", size=12), margin=dict(l=0, r=0, t=40, b=0),
-        barmode='group', # Agrupa as barras lado a lado
-        transition_duration=1000
-    )
-    fig_comparison.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#f1f5f9', tickformat="%d/%m")
-    fig_comparison.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#f1f5f9')
-    st.plotly_chart(fig_comparison, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+st.markdown(f'<div class="chart-title-highlight">Comparação: Consumo ENEL vs. Geração Solar ({plant_name})</div>', unsafe_allow_html=True)
+st.markdown(f'<p style="text-align: center; color: #64748b; margin-top: -0.5rem; margin-bottom: 0.5rem;">Período: {datetime.strptime(start_read_date, "%Y-%m-%d").strftime("%d/%m/%Y")} a {datetime.strptime(end_read_date, "%Y-%m-%d").strftime("%d/%m/%Y")}</p>', unsafe_allow_html=True)
+
+fig_comparison = go.Figure()
+fig_comparison.add_trace(go.Bar(
+    x=comparison_df['Data'],
+    y=comparison_df['Consumo ENEL'],
+    name='Consumo ENEL',
+    marker_color='#ef4444', # Vermelho
+    hovertemplate='<b>%{x|%d-%m-%Y}</b><br>Consumo: %{y:.1f} kWh<extra></extra>'
+))
+fig_comparison.add_trace(go.Bar(
+    x=comparison_df['Data'],
+    y=comparison_df['Geração Usina'],
+    name='Geração Usina',
+    marker_color='#22c55e', # Verde
+    hovertemplate='<b>%{x|%d-%m-%Y}</b><br>Geração: %{y:.1f} kWh<extra></extra>'
+))
+fig_comparison.update_layout(
+    height=400, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    xaxis_title="Data", yaxis_title="Energia (kWh)", hovermode='x unified', plot_bgcolor='white',
+    paper_bgcolor='white', font=dict(family="Segoe UI", size=12), margin=dict(l=0, r=0, t=40, b=0),
+    barmode='group', # Agrupa as barras lado a lado
+    transition_duration=1000
+)
+fig_comparison.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#f1f5f9', tickformat="%d/%m")
+fig_comparison.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#f1f5f9')
+st.plotly_chart(fig_comparison, use_container_width=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
 
-    # --- Detalhes Importantes para o Cliente Final ---
-    st.markdown("---")
-    st.markdown("### ✨ Detalhes Importantes para o Cliente")
+# --- Detalhes Importantes para o Cliente Final ---
+st.markdown("---")
+st.markdown("### ✨ Detalhes Importantes para o Cliente")
 
-    total_consumption = daily_consumption_data['Consumo (kWh)'].sum()
-    total_generation = daily_generation_client_data['Geração (kWh)'].sum()
+total_consumption = daily_consumption_data['Consumo (kWh)'].sum()
+total_generation = daily_generation_usina1_data['Geração (kWh)'].sum()
 
-    # A economia é o mínimo entre o consumo e a geração, pois você só economiza o que gerou e consumiu.
-    economy_kwh = min(total_consumption, total_generation)
+# A economia é o mínimo entre o consumo e a geração, pois você só economiza o que gerou e consumiu.
+economy_kwh = min(total_consumption, total_generation)
 
-    # Calcular o custo total original (sem solar)
-    # Assumindo uma tarifa ENEL padrão para o cálculo da economia monetária
-    enel_rate_for_calc = 0.22 # Use a tarifa ENEL definida no dashboard.py ou um valor fixo
-    original_cost = total_consumption * enel_rate_for_calc
+# Calcular o custo total original (sem solar)
+# Assumindo uma tarifa ENEL padrão para o cálculo da economia monetária
+enel_rate_for_calc = 0.22 # Use a tarifa ENEL definida no dashboard.py ou um valor fixo
+original_cost = total_consumption * enel_rate_for_calc
 
-    # Custo da energia economizada
-    saved_cost = economy_kwh * enel_rate_for_calc
+# Custo da energia economizada
+saved_cost = economy_kwh * enel_rate_for_calc
 
-    st.markdown(f"""
-    Para a **{CLIENT_NAME}, N° de Cliente {CLIENT_ID}**, no período de **{datetime.strptime(start_read_date, "%Y-%m-%d").strftime("%d/%m/%Y")} a {datetime.strptime(end_read_date, "%Y-%m-%d").strftime("%d/%m/%Y")}**:
+st.markdown(f"""
+Para a **{CLIENT_NAME}, N° de Cliente {CLIENT_ID}**, no período de **{datetime.strptime(start_read_date, "%Y-%m-%d").strftime("%d/%m/%Y")} a {datetime.strptime(end_read_date, "%Y-%m-%d").strftime("%d/%m/%Y")}**:
 
-    * **Consumo Total Registrado (ENEL):** **{total_consumption:.1f} kWh**
-    * **Geração Total da Usina 1:** **{total_generation:.1f} kWh**
+* **Consumo Total Registrado (ENEL):** **{total_consumption:.1f} kWh**
+* **Geração Total da {plant_name}:** **{total_generation:.1f} kWh**
 
-    Com base nesses dados, a usina solar gerou **{total_generation:.1f} kWh** de energia limpa, que contribuiu para atender ao seu consumo.
+Com base nesses dados, a usina solar gerou **{total_generation:.1f} kWh** de energia limpa, que contribuiu para atender ao seu consumo.
 
-    **Sua Economia Potencial:**
-    * Você economizou o equivalente a **{economy_kwh:.1f} kWh** em energia que não precisou comprar da ENEL.
-    * Isso representa uma economia estimada de **€{saved_cost:.2f}** na sua conta de energia (considerando a tarifa de €{enel_rate_for_calc:.2f}/kWh).
+**Sua Economia Potencial:**
+* Você economizou o equivalente a **{economy_kwh:.1f} kWh** em energia que não precisou comprar da ENEL.
+* Isso representa uma economia estimada de **€{saved_cost:.2f}** na sua conta de energia (considerando a tarifa de €{enel_rate_for_calc:.2f}/kWh).
 
-    **Próximos Passos:**
-    * Continue monitorando seu consumo e geração para otimizar o uso da energia solar.
-    * Seu saldo de créditos de energia é um ativo valioso. Acompanhe a validade dos créditos para garantir que sejam utilizados.
-    * Para uma análise mais aprofundada ou dúvidas sobre sua conta, entre em contato com a MMC Soluções.
-    """)
-
-else:
-    st.info("Por favor, carregue ou gere os dados de energia na página principal para ver a análise do cliente.")
+**Próximos Passos:**
+* Continue monitorando seu consumo e geração para otimizar o uso da energia solar.
+* Seu saldo de créditos de energia é um ativo valioso. Acompanhe a validade dos créditos para garantir que sejam utilizados.
+* Para uma análise mais aprofundada ou dúvidas sobre sua conta, entre em contato com a MMC Soluções.
+""")
